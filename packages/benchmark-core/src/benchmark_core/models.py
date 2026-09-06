@@ -26,6 +26,7 @@ __all__ = [
     "BenchmarkRequest",
     "BenchmarkResult",
     "CostMetrics",
+    "ExecutionMetadata",
     "GPUInfo",
     "LatencyMetrics",
     "MemoryMetrics",
@@ -198,6 +199,40 @@ class GPUInfo(BaseModel):
     )
 
 
+class ExecutionMetadata(BaseModel):
+    """Bookkeeping about how a benchmark run's iterations actually executed.
+
+    This is iteration-level accounting (how many ran, how many succeeded or
+    failed, how long the measured phase took) produced by a benchmark
+    execution engine such as ``BenchmarkRunner``. It is deliberately
+    separate from ``LatencyMetrics``/``ThroughputMetrics``: those describe
+    workload performance, this describes the run's own bookkeeping. It is
+    optional on ``BenchmarkResult`` so results produced without an
+    execution engine (e.g. hand-built in tests, or from other Phase 1
+    tooling) remain valid without it.
+    """
+
+    warmup_iterations: int = Field(ge=0, description="Number of warmup iterations executed.")
+    measured_iterations: int = Field(
+        gt=0, description="Total measured iterations attempted (successful + failed)."
+    )
+    successful_iterations: int = Field(ge=0, description="Measured iterations that succeeded.")
+    failed_iterations: int = Field(ge=0, description="Measured iterations that failed.")
+    total_elapsed_seconds: float = Field(
+        ge=0, description="Wall-clock time spent on the measured phase, in seconds."
+    )
+
+    @model_validator(mode="after")
+    def _check_iteration_counts_are_consistent(self) -> ExecutionMetadata:
+        if self.successful_iterations + self.failed_iterations != self.measured_iterations:
+            raise ValueError(
+                "successful_iterations + failed_iterations must equal measured_iterations "
+                f"(got {self.successful_iterations} + {self.failed_iterations} != "
+                f"{self.measured_iterations})"
+            )
+        return self
+
+
 class BenchmarkResult(BaseModel):
     """The full outcome of a single benchmark run."""
 
@@ -209,6 +244,10 @@ class BenchmarkResult(BaseModel):
     memory: MemoryMetrics
     cost: CostMetrics
     gpu: GPUInfo
+    execution: ExecutionMetadata | None = Field(
+        default=None,
+        description="Iteration-level execution bookkeeping, if produced by a BenchmarkRunner.",
+    )
     success: bool
     error: str | None = Field(default=None, description="Error message, required if not success.")
 

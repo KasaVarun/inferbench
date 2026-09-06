@@ -16,6 +16,7 @@ from benchmark_core import (
     BenchmarkRequest,
     BenchmarkResult,
     CostMetrics,
+    ExecutionMetadata,
     GPUInfo,
     LatencyMetrics,
     MemoryMetrics,
@@ -177,6 +178,18 @@ def make_gpu_info(**overrides: Any) -> GPUInfo:
     }
     defaults.update(overrides)
     return GPUInfo(**defaults)
+
+
+def make_execution_metadata(**overrides: Any) -> ExecutionMetadata:
+    defaults: dict[str, Any] = {
+        "warmup_iterations": 3,
+        "measured_iterations": 10,
+        "successful_iterations": 10,
+        "failed_iterations": 0,
+        "total_elapsed_seconds": 0.5,
+    }
+    defaults.update(overrides)
+    return ExecutionMetadata(**defaults)
 
 
 def make_successful_benchmark_result(**overrides: Any) -> BenchmarkResult:
