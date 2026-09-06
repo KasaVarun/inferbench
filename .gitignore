@@ -1,8 +1,14 @@
+# macOS
 .DS_Store
+
+# Env files
 .env
 .env.*
+
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -10,8 +16,23 @@ __pycache__/
 venv/
 dist/
 build/
+
+# Go
+apps/api-go/*.exe
+apps/api-go/*.test
+apps/api-go/*.out
+
+# Node / web (future)
 node_modules/
 coverage/
+
+# Logs
 *.log
+
+# Editors / IDE
 .idea/
 .vscode/
+
+# Benchmark outputs (generated data, not source)
+benchmarks/results/*
+!benchmarks/results/.gitkeep
