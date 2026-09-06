@@ -16,6 +16,9 @@ __pycache__/
 venv/
 dist/
 build/
+.coverage
+.coverage.*
+htmlcov/
 
 # Go
 apps/api-go/*.exe
