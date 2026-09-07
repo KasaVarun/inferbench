@@ -138,12 +138,12 @@ request executes (`BenchmarkExecutionError`, no output written).
 
 - `latency.p50_ms` / `p95_ms` / `p99_ms`: from real per-request wall-clock
   latencies (measured requests only).
-- `latency.tpot_ms`: **(sum of successful requests' latency in ms) /
-  (total output tokens across those requests)**. This intentionally
-  amortizes each request's prompt-processing ("prefill") time across its
-  output tokens -- it is an approximation of time-per-output-token, not a
-  true incremental decode-only measurement (that would require per-token
-  timestamps a single `generate()` call doesn't provide). `None` if no
+- `throughput.amortized_output_token_time_ms`: **(sum of successful
+  requests' end-to-end generation latency in ms) / (total output tokens
+  across those requests)**. This intentionally amortizes each request's
+  prompt-processing ("prefill") time and full-request generation overhead
+  across its output tokens -- a useful coarse aggregate, but explicitly
+  **not** true decode-only time-per-output-token (see §11). `None` if no
   successful request produced any output tokens.
 - `throughput.requests_per_second`, `input_tokens_per_second`,
   `output_tokens_per_second`, `total_tokens_per_second`: computed from
@@ -159,6 +159,15 @@ request executes (`BenchmarkExecutionError`, no output written).
   instrumentation exists in this phase (a single `generate()` call
   returns only after the full completion); approximating it from total
   latency would be a fabrication, not a measurement.
+- `latency.tpot_ms`: always `None`. This is **true decode-only** time per
+  output token, requiring real per-token timestamps that a single
+  `model.generate()` call does not provide. InferBench never approximates
+  it from total request latency -- that approximation is instead reported
+  honestly, under its own name, as
+  `throughput.amortized_output_token_time_ms` (§10). Do not treat the two
+  fields as interchangeable: one is a real (currently unmeasured)
+  per-token metric, the other is a coarse aggregate that includes prefill
+  and full-request overhead.
 - `memory.*`: always `None`. No GPU/MPS memory instrumentation exists;
   MPS memory is never mislabeled as NVIDIA GPU memory.
 - `cost.*`: always `None`, same as every prior phase.
@@ -202,8 +211,10 @@ or all-requests-failed outcome, with a concise message on stderr.
 
 - Concurrency is fixed at 1 -- requests execute strictly sequentially, no
   async batching yet.
-- `tpot_ms` is an amortized approximation (§10), not a true per-token
-  decode measurement.
+- `latency.tpot_ms` is always `None`: no true per-token decode
+  measurement exists yet. `throughput.amortized_output_token_time_ms`
+  (§10) is the coarse aggregate reported instead -- it is not a
+  substitute for real TPOT and must not be read as one.
 - No memory, cost, or CUDA metrics exist in this phase.
 - Hugging Face Hub downloads require network access the first time a
   given model is used; there is no bundled/offline model.

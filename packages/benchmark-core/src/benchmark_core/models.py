@@ -120,7 +120,15 @@ class LatencyMetrics(BaseModel):
         default=None, ge=0, description="Time to first token (ms), if streaming was used."
     )
     tpot_ms: float | None = Field(
-        default=None, ge=0, description="Time per output token (ms), if measured."
+        default=None,
+        ge=0,
+        description=(
+            "True decode-only time per output token (ms), measured from real per-token "
+            "timestamps. Stays None until that instrumentation exists -- never approximated "
+            "from total request latency. See "
+            "ThroughputMetrics.amortized_output_token_time_ms for the coarser aggregate that "
+            "InferBench currently reports instead."
+        ),
     )
 
     @model_validator(mode="after")
@@ -148,6 +156,17 @@ class ThroughputMetrics(BaseModel):
     )
     total_tokens_per_second: float | None = Field(
         default=None, ge=0, description="Combined input + output tokens per second."
+    )
+    amortized_output_token_time_ms: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Coarse aggregate: sum(successful request end-to-end generation latency ms) / "
+            "sum(successful generated output tokens). Includes prefill and full-request "
+            "generation overhead amortized across output tokens -- this is deliberately NOT "
+            "true decode-only time-per-output-token (see LatencyMetrics.tpot_ms, which stays "
+            "None until real per-token decode timing is measured)."
+        ),
     )
 
 

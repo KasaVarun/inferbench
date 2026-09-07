@@ -15,7 +15,7 @@ distribution of *per-request* end-to-end latency for a single benchmark run.
 | Field | Meaning |
 | --- | --- |
 | `ttft_ms` | **Time To First Token.** Time from when a request is sent until the first output token (or first streamed chunk) is received. Only meaningful for streaming responses; `None` if the run did not stream. Lower is better — it's the dominant contributor to perceived responsiveness in chat-style workloads. |
-| `tpot_ms` | **Time Per Output Token.** Average time to generate each subsequent output token after the first, i.e. the steady-state decode speed per token. Lower is better; this is what dominates total latency for long generations. |
+| `tpot_ms` | **Time Per Output Token.** True decode-only time per output token, measured from real per-token timestamps (steady-state decode speed, excluding prefill). Lower is better. As of Phase 4, InferBench has no per-token decode instrumentation, so this is always `None` — it is **never** approximated from total request latency. See `amortized_output_token_time_ms` below for the coarser aggregate InferBench reports instead. |
 | `p50_ms` | Median (50th percentile) end-to-end request latency. Represents "typical" request latency. |
 | `p95_ms` | 95th percentile end-to-end request latency. Represents latency experienced by the slower 5% of requests — a common SLO target. |
 | `p99_ms` | 99th percentile end-to-end request latency. Represents tail latency; sensitive to queuing, batching, and contention effects. |
@@ -31,6 +31,7 @@ percentile is — the model enforces this ordering.
 | `input_tokens_per_second` | Aggregate rate at which input/prompt tokens were processed (prefill) across all concurrent requests. |
 | `output_tokens_per_second` | Aggregate rate at which output tokens were generated (decode) across all concurrent requests. Often the key metric for cost/capacity planning. |
 | `total_tokens_per_second` | Sum of input and output tokens per second; a single-number proxy for total compute throughput. |
+| `amortized_output_token_time_ms` | **Amortized output-token time (not TPOT).** `sum(successful request end-to-end generation latency ms) / sum(successful generated output tokens)`. Includes prefill and full-request generation overhead amortized across output tokens -- a useful coarse aggregate, but must never be presented as the true decode-only `tpot_ms` above. `None` when there are zero successful output tokens. As of Phase 4, this is the only per-token timing InferBench's local backend actually populates. |
 
 ## Memory (`MemoryMetrics`)
 

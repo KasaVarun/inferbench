@@ -104,17 +104,21 @@ class _GenerationMeasurementCollector:
         p50, p95, p99 = (float(v) for v in np.percentile(self.latencies_ms, [50, 95, 99]))
         return p50, p95, p99
 
-    def average_ms_per_output_token(self) -> float | None:
-        """A defensible, documented approximation of "time per output token" (TPOT).
+    def amortized_output_token_time_ms(self) -> float | None:
+        """A coarse aggregate -- explicitly **not** true decode-only TPOT.
 
         Computed as (sum of successful requests' end-to-end latency in ms)
         / (total output tokens across those requests). This intentionally
-        includes each request's prompt-processing ("prefill") time
-        amortized across its output tokens -- it is **not** a true
-        incremental decode-only measurement, which would require
-        per-token timestamps that a single `model.generate()` call does
-        not provide. Returns `None` if no successful request produced any
-        output tokens (nothing defensible to compute).
+        includes each request's prompt-processing ("prefill") time and
+        full-request generation overhead amortized across its output
+        tokens -- it is **not** a true incremental decode-only
+        measurement, which would require per-token timestamps that a
+        single `model.generate()` call does not provide. This value is
+        reported as `ThroughputMetrics.amortized_output_token_time_ms`,
+        never as `LatencyMetrics.tpot_ms` (which stays `None` here; see
+        `docs/local-inference.md`). Returns `None` if no successful
+        request produced any output tokens (nothing defensible to
+        compute).
         """
         total_completion_tokens = self.total_completion_tokens
         if total_completion_tokens <= 0:
@@ -239,13 +243,14 @@ def _build_result(
             p95_ms=p95_ms,
             p99_ms=p99_ms,
             ttft_ms=None,  # No first-token streaming instrumentation exists yet.
-            tpot_ms=collector.average_ms_per_output_token(),
+            tpot_ms=None,  # No true decode-only per-token timing exists yet.
         ),
         throughput=ThroughputMetrics(
             requests_per_second=requests_per_second,
             input_tokens_per_second=input_tokens_per_second,
             output_tokens_per_second=output_tokens_per_second,
             total_tokens_per_second=input_tokens_per_second + output_tokens_per_second,
+            amortized_output_token_time_ms=collector.amortized_output_token_time_ms(),
         ),
         execution=execution,
         success=True,

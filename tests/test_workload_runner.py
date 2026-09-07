@@ -153,7 +153,22 @@ def test_no_fake_gpu_memory_metrics_are_ever_reported(workload: GeneratedWorkloa
     assert result.cost.estimated_benchmark_cost_usd is None
 
 
-def test_tpot_is_computed_from_completed_generation_when_tokens_exist(
+def test_tpot_ms_is_always_none_for_local_inference(workload: GeneratedWorkload) -> None:
+    """`tpot_ms` is true decode-only per-token timing, never measured here.
+
+    It must never be populated with the amortized approximation -- that is
+    reported separately, under its own honest name (see the
+    `amortized_output_token_time_ms` tests below).
+    """
+    backend = make_fake_backend(latency_ms=100.0)
+    backend.load()
+
+    result = run_workload(backend=backend, workload=workload, warmup_requests=0)
+
+    assert result.latency.tpot_ms is None
+
+
+def test_amortized_output_token_time_ms_is_populated_when_output_tokens_exist(
     workload: GeneratedWorkload,
 ) -> None:
     backend = make_fake_backend(latency_ms=100.0)
@@ -161,8 +176,54 @@ def test_tpot_is_computed_from_completed_generation_when_tokens_exist(
 
     result = run_workload(backend=backend, workload=workload, warmup_requests=0)
 
-    assert result.latency.tpot_ms is not None
-    assert result.latency.tpot_ms > 0.0
+    assert result.throughput.amortized_output_token_time_ms is not None
+    assert result.throughput.amortized_output_token_time_ms > 0.0
+
+
+def test_amortized_output_token_time_ms_calculation_is_correct(
+    workload: GeneratedWorkload,
+) -> None:
+    backend = make_fake_backend(latency_ms=100.0)
+    backend.load()
+
+    result = run_workload(backend=backend, workload=workload, warmup_requests=0)
+
+    total_latency_ms = 100.0 * workload.request_count
+    total_completion_tokens = sum(r.requested_output_tokens for r in workload.requests)
+    expected = total_latency_ms / total_completion_tokens
+    assert result.throughput.amortized_output_token_time_ms == pytest.approx(expected)
+
+
+def test_amortized_output_token_time_ms_uses_only_successful_requests(
+    workload: GeneratedWorkload,
+) -> None:
+    failing_prompt = workload.requests[1].prompt
+    backend = make_fake_backend(fail_prompts=[failing_prompt], latency_ms=100.0)
+    backend.load()
+
+    result = run_workload(backend=backend, workload=workload, warmup_requests=0)
+
+    successful_requests = [r for r in workload.requests if r.prompt != failing_prompt]
+    total_latency_ms = 100.0 * len(successful_requests)
+    total_completion_tokens = sum(r.requested_output_tokens for r in successful_requests)
+    expected = total_latency_ms / total_completion_tokens
+    assert result.throughput.amortized_output_token_time_ms == pytest.approx(expected)
+
+
+def test_amortized_output_token_time_ms_is_none_with_zero_output_tokens(
+    workload: GeneratedWorkload,
+) -> None:
+    all_prompts = [r.prompt for r in workload.requests]
+    backend = make_fake_backend(fail_prompts=all_prompts)
+    backend.load()
+
+    result = run_workload(backend=backend, workload=workload, warmup_requests=0)
+
+    # All requests failed -> zero successful output tokens -> no throughput
+    # populated at all for a failed result, but the field must not be a
+    # fabricated non-None value either.
+    assert result.success is False
+    assert result.throughput.amortized_output_token_time_ms is None
 
 
 def test_gpu_info_labels_cpu_device_without_cuda_fields() -> None:
@@ -218,10 +279,10 @@ def test_collector_percentiles_raises_with_zero_successes() -> None:
         collector.percentiles()
 
 
-def test_collector_average_ms_per_output_token_is_none_with_zero_completion_tokens() -> None:
+def test_collector_amortized_output_token_time_ms_is_none_with_zero_completion_tokens() -> None:
     collector = _GenerationMeasurementCollector()
     collector.record_success(latency_ms=5.0, prompt_tokens=3, completion_tokens=0)
-    assert collector.average_ms_per_output_token() is None
+    assert collector.amortized_output_token_time_ms() is None
 
 
 def test_benchmark_request_records_backend_and_model_metadata(

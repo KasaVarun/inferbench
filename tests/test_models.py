@@ -19,6 +19,7 @@ from benchmark_core import (
     CostMetrics,
     GPUInfo,
     MemoryMetrics,
+    ThroughputMetrics,
     WorkloadConfiguration,
 )
 from fixtures import (
@@ -251,11 +252,33 @@ def test_percentile_equal_values_are_allowed() -> None:
         "input_tokens_per_second",
         "output_tokens_per_second",
         "total_tokens_per_second",
+        "amortized_output_token_time_ms",
     ],
 )
 def test_negative_throughput_values_are_rejected(field: str) -> None:
     with pytest.raises(ValidationError):
         make_throughput_metrics(**{field: -1.0})
+
+
+def test_amortized_output_token_time_ms_defaults_to_none() -> None:
+    assert make_throughput_metrics().amortized_output_token_time_ms is None
+
+
+def test_throughput_metrics_accepts_amortized_output_token_time_ms() -> None:
+    metrics = make_throughput_metrics(amortized_output_token_time_ms=12.5)
+    assert metrics.amortized_output_token_time_ms == 12.5
+
+
+def test_old_throughput_metrics_payload_without_new_field_still_validates() -> None:
+    """A payload written before this field existed must still validate.
+
+    `amortized_output_token_time_ms` was added as an optional, defaulted
+    field specifically so that old `BenchmarkResult` JSON (from before
+    this field existed) keeps validating unchanged.
+    """
+    old_payload = {"requests_per_second": 4.5}
+    metrics = ThroughputMetrics.model_validate(old_payload)
+    assert metrics.amortized_output_token_time_ms is None
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +423,20 @@ def test_benchmark_result_datetime_round_trips_with_tzinfo() -> None:
     )
     restored = BenchmarkResult.model_validate_json(original.model_dump_json())
     assert restored.created_at == original.created_at
+
+
+def test_old_benchmark_result_payload_without_amortized_field_still_validates() -> None:
+    """A `BenchmarkResult` written before `amortized_output_token_time_ms`
+    existed must still validate unchanged -- this is why the field was
+    added as optional/defaulted rather than required.
+    """
+    payload = make_successful_benchmark_result().model_dump(mode="json")
+    assert "amortized_output_token_time_ms" in payload["throughput"]
+    del payload["throughput"]["amortized_output_token_time_ms"]
+
+    restored = BenchmarkResult.model_validate(payload)
+
+    assert restored.throughput.amortized_output_token_time_ms is None
     assert restored.created_at.tzinfo is not None
 
 
