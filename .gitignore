@@ -39,3 +39,5 @@ coverage/
 # Benchmark outputs (generated data, not source)
 benchmarks/results/*
 !benchmarks/results/.gitkeep
+benchmarks/workloads/*
+!benchmarks/workloads/.gitkeep

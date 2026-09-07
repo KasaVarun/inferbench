@@ -92,3 +92,16 @@ InferBench targets NVIDIA GPUs for inference benchmarking. Apple Silicon has
 no NVIDIA GPU, so all actual GPU/CUDA/Triton/vLLM work in later phases will
 run on remote infrastructure (e.g. cloud GPU providers or Modal), not on the
 local development machine.
+
+## Generate a synthetic workload (Phase 3)
+
+```bash
+python -m benchmark_core generate-workload \
+  --profile shared_prefix \
+  --requests 100 \
+  --seed 42 \
+  --output benchmarks/workloads/shared_prefix.json
+```
+
+Deterministic, local, no network access, no model execution. See
+[`docs/workloads.md`](docs/workloads.md) for the full methodology.

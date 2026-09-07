@@ -1,6 +1,6 @@
-"""Command-line interface for benchmark_core (Phase 2).
+"""Command-line interface for benchmark_core (Phase 2 + Phase 3).
 
-Exact command shape::
+Phase 2 command shape::
 
     python -m benchmark_core benchmark-cpu \\
         --iterations 100 \\
@@ -9,23 +9,31 @@ Exact command shape::
         --seed 42 \\
         --output benchmarks/results/cpu_baseline.json
 
-This runs the deterministic NumPy matmul workload through
-`benchmark_core.runner.BenchmarkRunner` and atomically writes the
-resulting `BenchmarkResult` as JSON to `--output`.
+Phase 3 command shape::
+
+    python -m benchmark_core generate-workload \\
+        --profile shared_prefix \\
+        --requests 100 \\
+        --seed 42 \\
+        --output benchmarks/workloads/shared_prefix.json
+
+`generate-workload` writes a deterministic `GeneratedWorkload` as JSON or
+YAML (selected by `--output`'s extension) using
+`benchmark_core.workload_generation.generate_workload`.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import os
 import sys
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from benchmark_core.atomic_io import write_atomic
 from benchmark_core.models import BenchmarkConfiguration, BenchmarkRequest, WorkloadConfiguration
 from benchmark_core.runner import BenchmarkExecutionError, BenchmarkRunner, WarmupConfig
+from benchmark_core.serialization import SUPPORTED_EXTENSIONS, workload_to_bytes
+from benchmark_core.workload_generation import SUPPORTED_PROFILES, generate_workload
 from benchmark_core.workloads import make_matmul_workload
 
 __all__ = ["build_parser", "main"]
@@ -55,13 +63,29 @@ def _non_negative_int(raw: str) -> int:
     return value
 
 
+def _unit_interval_float(raw: str) -> float:
+    value = float(raw)
+    if not (0.0 <= value <= 1.0):
+        raise argparse.ArgumentTypeError(f"must be within [0.0, 1.0], got {value}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmark_core",
-        description="InferBench Phase 2: local CPU benchmark harness.",
+        description="InferBench local benchmark harness and workload generator.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    _add_benchmark_cpu_parser(subparsers)
+    _add_generate_workload_parser(subparsers)
+
+    return parser
+
+
+def _add_benchmark_cpu_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     cpu_parser = subparsers.add_parser(
         "benchmark-cpu",
         help="Run the deterministic CPU NumPy matmul benchmark.",
@@ -80,7 +104,46 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, required=True, help="Path to write the BenchmarkResult JSON to."
     )
 
-    return parser
+
+def _add_generate_workload_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    workload_parser = subparsers.add_parser(
+        "generate-workload",
+        help="Generate a deterministic synthetic LLM workload artifact (JSON or YAML).",
+    )
+    workload_parser.add_argument(
+        "--profile", choices=SUPPORTED_PROFILES, required=True, help="Workload profile to generate."
+    )
+    workload_parser.add_argument(
+        "--requests", type=_positive_int, required=True, help="Number of requests (> 0)."
+    )
+    workload_parser.add_argument("--seed", type=int, required=True, help="Deterministic RNG seed.")
+    workload_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help=f"Output path; extension selects format ({', '.join(SUPPORTED_EXTENSIONS)}).",
+    )
+    workload_parser.add_argument(
+        "--input-tokens",
+        type=_positive_int,
+        default=None,
+        help="Override the target input tokens (> 0). Not meaningful for mixed_workload.",
+    )
+    workload_parser.add_argument(
+        "--output-tokens",
+        type=_positive_int,
+        default=None,
+        help="Override the requested output tokens (> 0). Not meaningful for mixed_workload.",
+    )
+    workload_parser.add_argument(
+        "--shared-prefix-ratio",
+        type=_unit_interval_float,
+        default=None,
+        help="Override the fraction of requests sharing an exact prefix ([0.0, 1.0]). "
+        "Only meaningful for the shared_prefix profile.",
+    )
 
 
 def _build_cpu_benchmark_request(
@@ -111,30 +174,6 @@ def _build_cpu_benchmark_request(
     )
 
 
-def _write_json_atomic(path: Path, payload: str) -> None:
-    """Write `payload` to `path` atomically, never corrupting an existing file.
-
-    A temporary file in the same directory is written and fsynced fully
-    before an atomic `os.replace` swaps it into place. If anything fails
-    before the replace, the temporary file is removed and `path` is left
-    completely untouched -- so a failed write can never leave a partial or
-    corrupted result behind, nor overwrite a previously valid one.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-            tmp_file.write(payload)
-            tmp_file.flush()
-            os.fsync(tmp_file.fileno())
-        os.replace(tmp_name, path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_name)
-        raise
-
-
 def _run_benchmark_cpu(args: argparse.Namespace) -> int:
     request = _build_cpu_benchmark_request(
         matrix_size=args.matrix_size, seed=args.seed, iterations=args.iterations
@@ -151,17 +190,48 @@ def _run_benchmark_cpu(args: argparse.Namespace) -> int:
         return 1
 
     output_path: Path = args.output
-    _write_json_atomic(output_path, result.model_dump_json(indent=2))
+    payload = (result.model_dump_json(indent=2) + "\n").encode("utf-8")
+    write_atomic(output_path, payload)
 
     status = "success" if result.success else "failure"
     print(f"benchmark-cpu: {status}, wrote result to {output_path}")
     return 0 if result.success else 1
 
 
+def _run_generate_workload(args: argparse.Namespace) -> int:
+    output_path: Path = args.output
+    if output_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        print(
+            f"generate-workload: unsupported output extension '{output_path.suffix}'; "
+            f"expected one of {SUPPORTED_EXTENSIONS}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        workload = generate_workload(
+            profile=args.profile,
+            request_count=args.requests,
+            seed=args.seed,
+            target_input_tokens=args.input_tokens,
+            requested_output_tokens=args.output_tokens,
+            shared_prefix_ratio=args.shared_prefix_ratio,
+        )
+    except ValueError as exc:
+        print(f"generate-workload: {exc}", file=sys.stderr)
+        return 1
+
+    payload = workload_to_bytes(workload, output_path.suffix)
+    write_atomic(output_path, payload)
+
+    print(f"generate-workload: wrote {len(workload.requests)} requests to {output_path}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    # `benchmark-cpu` is the only registered subcommand and `dest="command"`
-    # is `required=True`, so argparse itself rejects any invocation that
-    # doesn't resolve to it before `parse_args` returns.
     parser = build_parser()
     args = parser.parse_args(argv)
-    return _run_benchmark_cpu(args)
+
+    if args.command == "benchmark-cpu":
+        return _run_benchmark_cpu(args)
+    return _run_generate_workload(args)

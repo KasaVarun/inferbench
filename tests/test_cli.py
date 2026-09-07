@@ -203,11 +203,185 @@ def test_cli_real_subprocess_invocation_matches_documented_command(tmp_path: Pat
     BenchmarkResult.model_validate_json(output.read_text(encoding="utf-8"))
 
 
-def test_write_json_atomic_directly(tmp_path: Path) -> None:
-    from benchmark_core.cli import _write_json_atomic
+def test_write_atomic_directly(tmp_path: Path) -> None:
+    from benchmark_core.atomic_io import write_atomic
 
     target = tmp_path / "sub" / "out.json"
-    _write_json_atomic(target, '{"a": 1}')
+    write_atomic(target, b'{"a": 1}')
 
     assert target.read_text(encoding="utf-8") == '{"a": 1}'
     assert list(tmp_path.glob("**/.*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# generate-workload CLI (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _workload_args(output: Path, **overrides: str) -> list[str]:
+    args = {
+        "--profile": "shared_prefix",
+        "--requests": "10",
+        "--seed": "42",
+        "--output": str(output),
+    }
+    args.update(overrides)
+    result: list[str] = ["generate-workload"]
+    for key, value in args.items():
+        result.extend([key, value])
+    return result
+
+
+def test_generate_workload_json_smoke(tmp_path: Path) -> None:
+    output = tmp_path / "workload.json"
+    exit_code = main(_workload_args(output))
+
+    assert exit_code == 0
+    assert output.exists()
+
+    from benchmark_core import GeneratedWorkload
+
+    workload = GeneratedWorkload.model_validate_json(output.read_text(encoding="utf-8"))
+    assert workload.profile == "shared_prefix"
+    assert len(workload.requests) == 10
+
+
+def test_generate_workload_yaml_smoke(tmp_path: Path) -> None:
+    output = tmp_path / "workload.yaml"
+    exit_code = main(_workload_args(output, **{"--profile": "mixed_workload"}))
+
+    assert exit_code == 0
+    assert output.exists()
+
+    from benchmark_core import load_workload
+
+    workload = load_workload(output)
+    assert workload.profile == "mixed_workload"
+    assert len(workload.requests) == 10
+
+
+def test_generate_workload_rejects_invalid_profile(tmp_path: Path) -> None:
+    output = tmp_path / "workload.json"
+    with pytest.raises(SystemExit):
+        main(_workload_args(output, **{"--profile": "not_a_real_profile"}))
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("requests", ["0", "-1"])
+def test_generate_workload_rejects_non_positive_requests(tmp_path: Path, requests: str) -> None:
+    output = tmp_path / "workload.json"
+    with pytest.raises(SystemExit):
+        main(_workload_args(output, **{"--requests": requests}))
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("token_flag", ["--input-tokens", "--output-tokens"])
+@pytest.mark.parametrize("bad_value", ["0", "-5"])
+def test_generate_workload_rejects_invalid_token_target(
+    tmp_path: Path, token_flag: str, bad_value: str
+) -> None:
+    output = tmp_path / "workload.json"
+    with pytest.raises(SystemExit):
+        main(_workload_args(output, **{token_flag: bad_value}))
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("ratio", ["-0.1", "1.5"])
+def test_generate_workload_rejects_invalid_shared_prefix_ratio(tmp_path: Path, ratio: str) -> None:
+    output = tmp_path / "workload.json"
+    with pytest.raises(SystemExit):
+        main(_workload_args(output, **{"--shared-prefix-ratio": ratio}))
+    assert not output.exists()
+
+
+def test_generate_workload_reports_generator_value_error_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Valid to argparse (a real profile, positive requests), but semantically
+    # invalid: --input-tokens is not meaningful for mixed_workload, so
+    # `generate_workload` itself raises ValueError, which the CLI must catch.
+    output = tmp_path / "workload.json"
+    exit_code = main(
+        _workload_args(output, **{"--profile": "mixed_workload", "--input-tokens": "64"})
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert "not meaningful for mixed_workload" in captured.err
+
+
+def test_generate_workload_rejects_unsupported_output_extension(tmp_path: Path) -> None:
+    output = tmp_path / "workload.txt"
+    exit_code = main(_workload_args(output))
+    assert exit_code == 1
+    assert not output.exists()
+
+
+def test_generate_workload_seed_must_parse_as_integer(tmp_path: Path) -> None:
+    output = tmp_path / "workload.json"
+    with pytest.raises(SystemExit):
+        main(_workload_args(output, **{"--seed": "not-an-int"}))
+    assert not output.exists()
+
+
+def test_generate_workload_optional_overrides_are_applied(tmp_path: Path) -> None:
+    output = tmp_path / "workload.json"
+    exit_code = main(
+        _workload_args(
+            output,
+            **{"--input-tokens": "128", "--output-tokens": "16", "--shared-prefix-ratio": "0.5"},
+        )
+    )
+    assert exit_code == 0
+
+    from benchmark_core import load_workload
+
+    workload = load_workload(output)
+    assert workload.generator_configuration.target_input_tokens == 128
+    assert workload.generator_configuration.requested_output_tokens == 16
+    assert workload.generator_configuration.shared_prefix_ratio == 0.5
+
+
+def test_generate_workload_deterministic_across_two_cli_invocations(tmp_path: Path) -> None:
+    first_output = tmp_path / "first.json"
+    second_output = tmp_path / "second.json"
+
+    main(_workload_args(first_output))
+    main(_workload_args(second_output))
+
+    assert first_output.read_bytes() == second_output.read_bytes()
+
+
+def test_generate_workload_subprocess_invocation_matches_documented_command(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "shared_prefix.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmark_core",
+            "generate-workload",
+            "--profile",
+            "shared_prefix",
+            "--requests",
+            "10",
+            "--seed",
+            "42",
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert output.exists()
+
+    from benchmark_core import GeneratedWorkload
+
+    GeneratedWorkload.model_validate_json(output.read_text(encoding="utf-8"))
