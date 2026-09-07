@@ -13,6 +13,8 @@ dependencies = [
     "pydantic>=2.7,<3",
     "numpy>=1.26,<3",
     "pyyaml>=6.0,<7",
+    "torch>=2.2,<3",
+    "transformers>=4.40,<5",
 ]
 
 [project.optional-dependencies]
@@ -56,3 +58,13 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["packages/benchmark-core/src"]
+
+# `transformers`'s `Auto*.from_pretrained()` classmethods ship with no
+# parameter/return type annotations at all (verified in the installed
+# package source, not a missing-stubs issue `ignore_missing_imports` would
+# fix). `disallow_untyped_calls` is relaxed only for this one module, which
+# is the sole integration boundary with that untyped API; every other
+# module in this project remains fully strict.
+[[tool.mypy.overrides]]
+module = "benchmark_core.local_transformers_backend"
+disallow_untyped_calls = false

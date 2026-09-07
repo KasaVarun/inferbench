@@ -105,3 +105,18 @@ python -m benchmark_core generate-workload \
 
 Deterministic, local, no network access, no model execution. See
 [`docs/workloads.md`](docs/workloads.md) for the full methodology.
+
+## Run local inference (Phase 4)
+
+```bash
+python -m benchmark_core run-local \
+  --model sshleifer/tiny-gpt2 \
+  --workload benchmarks/workloads/short_prompt_short_output.json \
+  --warmup 1 \
+  --output benchmarks/results/local_transformers_smoke.json
+```
+
+Runs a small causal LM locally on Apple MPS (falling back to CPU) via
+PyTorch + `transformers` -- no CUDA, no remote GPU. See
+[`docs/local-inference.md`](docs/local-inference.md) for the full
+methodology.

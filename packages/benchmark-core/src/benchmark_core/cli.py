@@ -1,4 +1,4 @@
-"""Command-line interface for benchmark_core (Phase 2 + Phase 3).
+"""Command-line interface for benchmark_core (Phase 2 + Phase 3 + Phase 4).
 
 Phase 2 command shape::
 
@@ -20,6 +20,20 @@ Phase 3 command shape::
 `generate-workload` writes a deterministic `GeneratedWorkload` as JSON or
 YAML (selected by `--output`'s extension) using
 `benchmark_core.workload_generation.generate_workload`.
+
+Phase 4 command shape::
+
+    python -m benchmark_core run-local \\
+        --model sshleifer/tiny-gpt2 \\
+        --workload benchmarks/workloads/short_prompt_short_output.json \\
+        --warmup 1 \\
+        --output benchmarks/results/local_transformers_smoke.json
+
+`run-local` loads a `GeneratedWorkload` (JSON or YAML), loads a small
+causal LM locally via `benchmark_core.local_transformers_backend` (Apple
+MPS if available, else CPU), executes every request through
+`benchmark_core.workload_runner.run_workload`, and writes the resulting
+`BenchmarkResult` atomically.
 """
 
 from __future__ import annotations
@@ -30,13 +44,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from benchmark_core.atomic_io import write_atomic
+from benchmark_core.local_transformers_backend import LocalTransformersBackend
 from benchmark_core.models import BenchmarkConfiguration, BenchmarkRequest, WorkloadConfiguration
 from benchmark_core.runner import BenchmarkExecutionError, BenchmarkRunner, WarmupConfig
-from benchmark_core.serialization import SUPPORTED_EXTENSIONS, workload_to_bytes
+from benchmark_core.serialization import SUPPORTED_EXTENSIONS, load_workload, workload_to_bytes
 from benchmark_core.workload_generation import SUPPORTED_PROFILES, generate_workload
+from benchmark_core.workload_runner import run_workload
 from benchmark_core.workloads import make_matmul_workload
 
 __all__ = ["build_parser", "main"]
+
+_DEVICE_CHOICES = ("auto", "mps", "cpu")
 
 # WorkloadConfiguration (Phase 1) was designed for LLM-shaped workloads: it
 # requires `output_tokens > 0` and treats `prompt_tokens`/`output_tokens` as
@@ -79,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_benchmark_cpu_parser(subparsers)
     _add_generate_workload_parser(subparsers)
+    _add_run_local_parser(subparsers)
 
     return parser
 
@@ -143,6 +162,31 @@ def _add_generate_workload_parser(
         default=None,
         help="Override the fraction of requests sharing an exact prefix ([0.0, 1.0]). "
         "Only meaningful for the shared_prefix profile.",
+    )
+
+
+def _add_run_local_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    run_local_parser = subparsers.add_parser(
+        "run-local",
+        help="Run a GeneratedWorkload through a local transformers model (MPS or CPU).",
+    )
+    run_local_parser.add_argument(
+        "--model", type=str, required=True, help="Hugging Face model name/path to load."
+    )
+    run_local_parser.add_argument(
+        "--workload", type=Path, required=True, help="Path to a GeneratedWorkload JSON/YAML file."
+    )
+    run_local_parser.add_argument(
+        "--warmup", type=_non_negative_int, required=True, help="Warmup requests (>= 0)."
+    )
+    run_local_parser.add_argument(
+        "--output", type=Path, required=True, help="Path to write the BenchmarkResult JSON to."
+    )
+    run_local_parser.add_argument(
+        "--device",
+        choices=_DEVICE_CHOICES,
+        default="auto",
+        help="Device to run on: auto (prefer MPS), mps (fail if unavailable), or cpu.",
     )
 
 
@@ -228,10 +272,52 @@ def _run_generate_workload(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_local(args: argparse.Namespace) -> int:
+    workload_path: Path = args.workload
+    try:
+        workload = load_workload(workload_path)
+    except Exception as exc:
+        # Broad but not silent: missing files, malformed JSON/YAML, an
+        # unsupported extension, and schema validation failures all end
+        # up here, each reported clearly with a nonzero exit.
+        print(f"run-local: failed to load workload: {exc}", file=sys.stderr)
+        return 1
+
+    backend = LocalTransformersBackend(model_name=args.model, device=args.device)
+    try:
+        try:
+            backend.load()
+        except Exception as exc:
+            print(f"run-local: model/tokenizer load failed: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            result = run_workload(backend=backend, workload=workload, warmup_requests=args.warmup)
+        except BenchmarkExecutionError as exc:
+            print(f"run-local: warmup failed, no output written: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        # Close even after a load or warmup failure, where practical --
+        # both LocalTransformersBackend.close() and any well-behaved
+        # backend's close() are safe to call on a never-/partially-loaded
+        # backend.
+        backend.close()
+
+    output_path: Path = args.output
+    payload = (result.model_dump_json(indent=2) + "\n").encode("utf-8")
+    write_atomic(output_path, payload)
+
+    status = "success" if result.success else "failure"
+    print(f"run-local: {status}, wrote result to {output_path}")
+    return 0 if result.success else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "benchmark-cpu":
         return _run_benchmark_cpu(args)
-    return _run_generate_workload(args)
+    if args.command == "generate-workload":
+        return _run_generate_workload(args)
+    return _run_local(args)

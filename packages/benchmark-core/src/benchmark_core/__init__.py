@@ -4,12 +4,26 @@ Phase 1 defined the typed benchmark domain model (Pydantic v2).
 Phase 2 added a local, CPU-only benchmark execution engine
 (`BenchmarkRunner`) and a deterministic NumPy workload used to validate
 it end-to-end.
-Phase 3 adds deterministic synthetic LLM workload generation
+Phase 3 added deterministic synthetic LLM workload generation
 (`generate_workload`) and JSON/YAML serialization for the resulting
-artifacts -- still no GPU, CUDA, inference, or network access anywhere in
-this package.
+artifacts.
+Phase 4 adds the first real inference backend: `LocalTransformersBackend`
+runs a small causal LM locally via PyTorch + `transformers`, on Apple MPS
+(falling back to CPU) -- still no CUDA, no remote GPU, and no network
+access except explicitly inside `load()`.
 """
 
+from benchmark_core.inference_backend import (
+    BackendInfo,
+    GenerationRequest,
+    GenerationResponse,
+    InferenceBackend,
+)
+from benchmark_core.local_transformers_backend import (
+    LocalTransformersBackend,
+    is_mps_available,
+    resolve_device,
+)
 from benchmark_core.models import (
     BenchmarkConfiguration,
     BenchmarkRequest,
@@ -42,13 +56,15 @@ from benchmark_core.workload_generation import (
     WorkloadProfileDefinition,
     generate_workload,
 )
+from benchmark_core.workload_runner import run_workload
 from benchmark_core.workloads import MatmulWorkload, make_matmul_workload
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "SUPPORTED_EXTENSIONS",
     "SUPPORTED_PROFILES",
+    "BackendInfo",
     "BenchmarkConfiguration",
     "BenchmarkExecutionError",
     "BenchmarkRequest",
@@ -61,8 +77,12 @@ __all__ = [
     "GPUInfo",
     "GeneratedRequest",
     "GeneratedWorkload",
+    "GenerationRequest",
+    "GenerationResponse",
     "GeneratorConfiguration",
+    "InferenceBackend",
     "LatencyMetrics",
+    "LocalTransformersBackend",
     "MatmulWorkload",
     "MeasurementCollector",
     "MemoryMetrics",
@@ -74,8 +94,11 @@ __all__ = [
     "__version__",
     "generate_workload",
     "get_version",
+    "is_mps_available",
     "load_workload",
     "make_matmul_workload",
+    "resolve_device",
+    "run_workload",
     "write_workload",
 ]
 
