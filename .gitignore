@@ -4,6 +4,7 @@
 # Env files
 .env
 .env.*
+.modal.toml
 
 # Python
 __pycache__/

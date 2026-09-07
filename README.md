@@ -120,3 +120,16 @@ Runs a small causal LM locally on Apple MPS (falling back to CPU) via
 PyTorch + `transformers` -- no CUDA, no remote GPU. See
 [`docs/local-inference.md`](docs/local-inference.md) for the full
 methodology.
+
+## Run the remote CUDA smoke benchmark (Phase 5)
+
+Authenticate once, then launch a pay-per-run Modal A10G job:
+
+```bash
+.venv/bin/modal setup
+.venv/bin/modal run infra/modal/gpu_smoke.py
+```
+
+This is a one-shot PyTorch CUDA matrix-multiplication benchmark, not a
+persistent service. See [`docs/cuda-smoke.md`](docs/cuda-smoke.md) for GPU,
+dtype, timing, correctness, memory, and low-cost smoke options.

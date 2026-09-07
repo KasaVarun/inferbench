@@ -10,3 +10,7 @@ def test_package_is_importable() -> None:
 def test_version_is_a_string() -> None:
     assert isinstance(__version__, str)
     assert __version__ != ""
+
+
+def test_version_is_phase_5() -> None:
+    assert __version__ == "0.5.0"
