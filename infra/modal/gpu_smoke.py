@@ -42,6 +42,16 @@ _AUTH_HELP = (
 )
 
 
+def benchmark_result_json_bytes(result: Any) -> bytes:
+    """Serialize a ``BenchmarkResult`` for ``--output``.
+
+    The remote function still returns a full ``CudaBenchmarkReport``. The
+    local ``--output`` file is the nested ``BenchmarkResult`` so it validates
+    with ``BenchmarkResult.model_validate_json``.
+    """
+    return (result.model_dump_json(indent=2) + "\n").encode()
+
+
 def modal_is_authenticated() -> bool:
     """Return whether the local Modal client has credentials configured.
 
@@ -233,14 +243,12 @@ def main(
     except AuthError as exc:
         raise RuntimeError(_AUTH_HELP) from exc
     report = CudaBenchmarkReport.model_validate(report_data)
+    result = report.result
 
-    payload = (report.model_dump_json(indent=2) + "\n").encode()
     if output is not None:
         output_path = Path(output)
-        write_atomic(output_path, payload)
-        print(f"Wrote validated CUDA benchmark report to {output_path}")
-
-    result = report.result
+        write_atomic(output_path, benchmark_result_json_bytes(result))
+        print(f"Wrote validated BenchmarkResult to {output_path}")
     print(
         f"CUDA smoke succeeded on {result.gpu.gpu_name} "
         f"({result.gpu.gpu_type}, CUDA {result.gpu.cuda_version}, "

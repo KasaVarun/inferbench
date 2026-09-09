@@ -12,6 +12,15 @@ from types import ModuleType
 
 import pytest
 
+from benchmark_core import BenchmarkResult
+from benchmark_core.cuda_benchmark import (
+    CudaBenchmarkConfiguration,
+    CudaDtype,
+    CudaEnvironment,
+    ModalGPUType,
+    build_cuda_benchmark_report,
+)
+
 
 def _load_gpu_smoke() -> ModuleType:
     path = Path(__file__).resolve().parents[1] / "infra" / "modal" / "gpu_smoke.py"
@@ -132,3 +141,36 @@ def test_benchmark_core_is_resolved_by_installed_package_not_repo_path(
     assert benchmark_core.__file__ is not None
     assert "add_local_python_source" in _gpu_smoke_source()
     assert gpu_smoke.image is not None
+
+
+def test_output_file_payload_validates_as_benchmark_result(gpu_smoke: ModuleType) -> None:
+    report = build_cuda_benchmark_report(
+        config=CudaBenchmarkConfiguration(
+            matrix_size=1024,
+            iterations=3,
+            warmup=1,
+            dtype=CudaDtype.FLOAT16,
+            gpu_type=ModalGPUType.A10G,
+        ),
+        environment=CudaEnvironment(
+            torch_version="2.14.0+cu130",
+            cuda_version="13.0",
+            cuda_available=True,
+            device_count=1,
+            gpu_name="NVIDIA A10G",
+            compute_capability=(8, 6),
+            total_gpu_memory_bytes=24 * 1024**3,
+            current_device=0,
+            python_version="3.12.11",
+        ),
+        cuda_latencies_ms=[1.0, 2.0, 3.0],
+        host_latencies_ms=[1.5, 2.5, 3.5],
+        measured_wall_seconds=0.01,
+        peak_allocated_bytes=1024**2,
+        peak_reserved_bytes=2 * 1024**2,
+    )
+    payload = gpu_smoke.benchmark_result_json_bytes(report.result)
+    restored = BenchmarkResult.model_validate_json(payload)
+    assert restored.success is True
+    assert restored.gpu.gpu_name == "NVIDIA A10G"
+    assert restored.memory.peak_allocated_mb == 1.0

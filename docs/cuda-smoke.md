@@ -276,10 +276,11 @@ Low-cost acceptance smoke:
   --output /tmp/inferbench_cuda_smoke.json
 ```
 
-The output file is a JSON-serialized `CudaBenchmarkReport` containing the
-typed `BenchmarkResult`, environment metadata, correctness status, and both
-per-iteration timing arrays. It is written atomically by the local
-entrypoint.
+The `--output` file is a JSON-serialized `BenchmarkResult` (the typed
+InferBench result), written atomically by the local entrypoint. The remote
+function still returns a `CudaBenchmarkReport` over the Modal call so the
+entrypoint can validate environment metadata, correctness, and both
+per-iteration timing arrays before writing.
 
 ## 15. Limitations
 
