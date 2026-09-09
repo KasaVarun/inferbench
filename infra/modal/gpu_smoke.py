@@ -17,11 +17,14 @@ from typing import Any
 
 import modal
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-BENCHMARK_CORE_SOURCE = REPOSITORY_ROOT / "packages" / "benchmark-core" / "src"
-
 app = modal.App("inferbench-cuda-smoke")
 
+# Package `benchmark_core` into the image by module name. Modal 1.5.5's
+# `add_local_python_source` locates the locally installed package (the
+# editable inferbench install) and copies it to `/root`, which is already
+# on the container PYTHONPATH. This must not derive a repository root from
+# `__file__`: Modal mounts this script as `/root/gpu_smoke.py`, which does
+# not have two grandparents.
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -30,8 +33,7 @@ image = (
         "pyyaml>=6.0,<7",
         "torch>=2.2,<3",
     )
-    .add_local_dir(BENCHMARK_CORE_SOURCE, "/root/inferbench", copy=True)
-    .env({"PYTHONPATH": "/root/inferbench"})
+    .add_local_python_source("benchmark_core", copy=True)
 )
 
 _AUTH_HELP = (

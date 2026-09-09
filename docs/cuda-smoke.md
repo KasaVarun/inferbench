@@ -44,7 +44,13 @@ The Modal image is Debian slim with Python 3.12 and only:
 - NumPy,
 - Pydantic,
 - PyYAML, and
-- the local `benchmark-core` source tree.
+- the local `benchmark_core` package, included with Modal 1.5.5
+  `Image.add_local_python_source("benchmark_core", copy=True)`.
+
+That API locates the locally installed package by name and copies it into
+`/root` on the image. The remote script is mounted as `/root/gpu_smoke.py`
+and must not derive a repository root from `__file__` (that path has no
+usable grandparents).
 
 PyTorch comes from its normal Python package; no NVIDIA wheel URL, CUDA
 compiler toolkit, Triton, transformers, vLLM, or unrelated ML package is

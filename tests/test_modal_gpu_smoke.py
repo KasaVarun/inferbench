@@ -84,3 +84,51 @@ def test_auth_help_mentions_supported_setup_commands_and_not_secrets(
     assert "ak-" not in gpu_smoke._AUTH_HELP
     assert "as-" not in gpu_smoke._AUTH_HELP
     assert "token_secret" not in gpu_smoke._AUTH_HELP
+
+
+def _gpu_smoke_source() -> str:
+    return (Path(__file__).resolve().parents[1] / "infra" / "modal" / "gpu_smoke.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_gpu_smoke_does_not_derive_repository_root_from_file_parents() -> None:
+    """Modal mounts this script as `/root/gpu_smoke.py`.
+
+    `Path('/root/gpu_smoke.py').parents[2]` raises ``IndexError`` because that
+    path has only `/root` and `/`. Packaging must not assume repository depth.
+    """
+    source = _gpu_smoke_source()
+    assert "parents[2]" not in source
+    assert "REPOSITORY_ROOT" not in source
+    assert "BENCHMARK_CORE_SOURCE" not in source
+    assert 'add_local_python_source("benchmark_core"' in source
+
+    shallow = Path("/root/gpu_smoke.py")
+    with pytest.raises(IndexError):
+        _ = shallow.parents[2]
+
+
+def test_gpu_smoke_imports_when_copied_away_from_the_repository_layout(
+    tmp_path: Path,
+) -> None:
+    """Import must succeed even if the file is not under infra/modal/."""
+    dest = tmp_path / "gpu_smoke.py"
+    dest.write_text(_gpu_smoke_source(), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("inferbench_gpu_smoke_copied", dest)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.app.name == "inferbench-cuda-smoke"
+    assert not hasattr(module, "REPOSITORY_ROOT")
+
+
+def test_benchmark_core_is_resolved_by_installed_package_not_repo_path(
+    gpu_smoke: ModuleType,
+) -> None:
+    import benchmark_core
+
+    assert benchmark_core.__file__ is not None
+    assert "add_local_python_source" in _gpu_smoke_source()
+    assert gpu_smoke.image is not None
